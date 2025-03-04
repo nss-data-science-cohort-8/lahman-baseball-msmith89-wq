@@ -4,7 +4,7 @@
 
 -- 1. Find all players in the database who played at Vanderbilt University. Create a list showing each player's first and last names as well as the total salary they earned in the major leagues. Sort this list in descending order by the total salary earned. Which Vanderbilt player earned the most money in the majors?
    
-   SELECT namefirst ||' '|| namelast, CAST(SUM(salary) AS NUMERIC)::money AS money
+   SELECT namefirst ||' '|| namelast, CAST(SUM(DISTINCT salary) AS NUMERIC)::money AS money
    FROM schools
    INNER JOIN collegeplaying
    USING(schoolid)
@@ -15,19 +15,18 @@
    WHERE schoolname = 'Vanderbilt University'
    GROUP BY namefirst, namelast
    ORDER BY money DESC;
-  
+
+  SELECT *
+  FROM collegeplaying;
 
 -- 2. Using the fielding table, group players into three groups based on their position: label players with position OF as "Outfield", those with position "SS", "1B", "2B", and "3B" as "Infield", and those with position "P" or "C" as "Battery". Determine the number of putouts made by each of these three groups in 2016.
 
    SELECT
-       --namefirst ||' '|| namelast AS name,
 	   SUM(po) AS putout_num,
        CASE WHEN pos = 'OF' THEN 'Outfield'
 	        WHEN pos IN ('SS', '1B', '2B', '3B') THEN 'Infield'
 			WHEN pos IN('P', 'C') THEN 'Battery' ELSE 'NULL' END AS position
    FROM fielding
-   --INNER JOIN people
-  -- USING(playerid)
    WHERE yearid = 2016
    GROUP BY position;
 
@@ -38,9 +37,9 @@ WITH decade_int AS(
      SELECT generate_series(1920,2010,10) AS lower,
 	        generate_series(1930,2020,10) AS upper)
 
-SELECT lower, upper, ROUND((CAST(SUM(so) AS NUMERIC))/(CAST(SUM(g) AS NUMERIC)), 2) AS avg_so, ROUND((CAST(SUM(hr) AS NUMERIC))/(CAST(SUM(g) AS NUMERIC)), 2) AS avg_hr
+SELECT lower, upper, ROUND((CAST(SUM(so) AS NUMERIC))/(CAST(SUM(g) AS NUMERIC)/2), 2) AS avg_so, ROUND((CAST(SUM(hr) AS NUMERIC))/(CAST(SUM(g) AS NUMERIC)/2), 2) AS avg_hr
  FROM decade_int
- LEFT JOIN batting
+ LEFT JOIN teams
  ON yearid >= lower AND yearid <= upper
  GROUP BY lower, upper
  ORDER BY lower, upper;
@@ -60,6 +59,57 @@ LIMIT 1;
 --Chris Owings had the most success stealing bases in 2016.
 
 -- 5. From 1970 to 2016, what is the largest number of wins for a team that did not win the world series? What is the smallest number of wins for a team that did win the world series? Doing this will probably result in an unusually small number of wins for a world series champion; determine why this is the case. Then redo your query, excluding the problem year. How often from 1970 to 2016 was it the case that a team with the most wins also won the world series? What percentage of the time?
+
+(SELECT teamID, name AS team, yearid, W, wswin
+FROM teams
+WHERE yearid >= 1970
+AND yearid <= 2016
+AND wswin = 'N'
+GROUP BY teamID, name, yearid, W, wswin
+ORDER BY W DESC
+LIMIT 1)
+UNION
+(SELECT teamID, name AS team, yearid, W, wswin
+FROM teams
+WHERE yearid >= 1970
+AND yearid <= 2016
+AND wswin = 'Y'
+GROUP BY teamID, name, yearid, W, wswin
+ORDER BY W
+LIMIT 1);
+
+--The resulting query above shows that the Seattle Mariners had the largest number of wins for a team that did not win the world series between 1970 and 2016 in 2001,
+--and that the Los Angeles Dodgers had the smallest number of wins for a team that did win the world series between 1970 and 2016 in 1981.
+
+SELECT teamid, name AS team, W, wswin
+FROM teams
+WHERE yearid = 1981
+GROUP BY teamid, name, W, wswin
+ORDER BY W DESC;
+
+--The number of wins for LAN in 1981 seemed unusually low for a team that won the world series that year, so the query above reveals two teams having more wins in 1981 than the team that won the world series that year.
+WITH CTE_1 AS (
+SELECT yearid, MAX(W) AS most_wins_per_year
+FROM teams
+WHERE yearid >= 1970
+AND yearid <= 2016
+AND yearid != 1981
+GROUP BY yearid
+ORDER BY yearid),
+
+ws_max_table AS (
+SELECT
+     yearid,
+     CASE WHEN wswin = 'Y' AND most_wins_per_year = W THEN 1
+	      WHEN wswin = 'N' AND most_wins_per_year = W THEN 0 END AS ws_win_max
+FROM teams
+INNER JOIN CTE_1
+USING(yearid)
+GROUP BY yearid, wswin, most_wins_per_year, W
+ORDER BY yearid)
+
+SELECT ROUND(100 * (CAST(SUM(ws_win_max) AS NUMERIC)/CAST(COUNT(DISTINCT yearid) AS NUMERIC)), 2) AS ws_win_max_percentage
+FROM ws_max_table;
 
 
 
