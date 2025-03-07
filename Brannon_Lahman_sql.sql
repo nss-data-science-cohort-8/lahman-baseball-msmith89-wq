@@ -322,6 +322,93 @@ USING (yearid, playerid)
 LEFT JOIN people
 USING (playerid);
 
+--or
+
+WITH manaward AS(
+  SELECT DISTINCT
+    playerid, 
+    COUNT(DISTINCT lgid) AS leagues
+  FROM awardsmanagers
+  WHERE awardid = 'TSN Manager of the Year'
+    AND lgid IN ('AL', 'NL')
+  GROUP BY 1
+  HAVING COUNT(DISTINCT lgid) = 2
+)
+SELECT DISTINCT 
+  m.playerid,
+  CONCAT(p.namefirst, ' ', p.namelast) AS name, 
+  m.yearid, 
+  m.lgid, 
+  t.teamid, 
+  n.name
+FROM manaward AS a
+INNER JOIN awardsmanagers AS m
+  ON a.playerid = m.playerid
+INNER JOIN managers AS t
+  ON a.playerid = t.playerid
+  AND m.yearid = t.yearid
+LEFT JOIN teams AS n
+  ON t.teamid = n.teamid
+  AND m.yearid = n.yearid
+LEFT JOIN people AS p
+  ON a.playerid = p.playerid
+
+  --or
+
+  WITH both_league_winners AS (
+    SELECT
+        playerid
+    FROM awardsmanagers
+    WHERE awardid = 'TSN Manager of the Year'
+        AND lgid IN ('AL', 'NL')
+    GROUP BY playerid
+    HAVING COUNT(DISTINCT lgid) = 2
+    )
+SELECT
+    namefirst || ' ' || namelast AS full_name,
+    yearid,
+    lgid,
+    name AS team_name
+FROM people
+INNER JOIN both_league_winners
+USING(playerid)
+INNER JOIN awardsmanagers
+USING(playerid)
+INNER JOIN managers
+USING(playerid, yearid, lgid)
+INNER JOIN teams
+USING(teamid, yearid,lgid)
+WHERE awardid = 'TSN Manager of the Year'
+ORDER BY full_name, yearid;
+with winners AS (
+SELECT 
+    playerid
+    , COUNT(DISTINCT lgid) as leagues_won
+FROM awardsmanagers
+WHERE awardid LIKE '%TSN%'
+AND lgid IN ('NL', 'AL')
+GROUP BY 1
+)
+, dual_leagues AS (
+SELECT 
+    yearid
+    , playerid
+FROM (SELECT playerid FROM winners WHERE leagues_won > 1) a
+LEFT JOIN awardsmanagers b
+USING(playerid)
+WHERE awardid LIKE '%TSN%'
+)
+SELECT
+    namefirst
+    , namelast
+    , teamid
+    , yearid
+FROM dual_leagues a
+LEFT JOIN managers
+USING (yearid, playerid)
+LEFT JOIN people
+USING (playerid);
+
 -- 7. Which pitcher was the least efficient in 2016 in terms of salary / strikeouts? Only consider pitchers who started at least 10 games (across all teams). Note that pitchers often play for more than one team in a season, so be sure that you are counting all stats for each player.
 
 WITH CTE AS(SELECT playerid, SUM(gs) AS total_games_started, SUM(so) AS total_strikeouts, yearid
@@ -339,6 +426,101 @@ USING(playerid)
 GROUP BY playerid, namefirst, namelast, total_strikeouts
 ORDER BY salary_per_strikeouts DESC;
 
+--or
+
+WITH pitchers AS (
+    SELECT 
+        playerid
+        , SUM(SO) AS strikeouts
+        , SUM(gs) AS games_started
+    FROM pitching
+    WHERE yearid = 2016
+    GROUP BY 1
+)
+, pitcher_efficiency AS (
+    SELECT 
+        a.playerid
+        , strikeouts
+        , SUM(salary) AS total_salary
+        , SUM(salary)/strikeouts AS cost_of_each_strikeout
+    FROM salaries a 
+    JOIN pitchers b 
+    USING(playerid)
+    WHERE yearid = 2016
+    AND games_started >= 10
+    GROUP BY 1, strikeouts
+)
+SELECT
+    namefirst
+    , namelast
+    , strikeouts
+    , total_salary
+    , cost_of_each_strikeout
+FROM pitcher_efficiency
+LEFT JOIN people
+USING(playerid)
+ORDER BY cost_of_each_strikeout DESC;
+
+--or
+
+WITH pitcher_stats AS (
+	SELECT 
+		playerid
+		, SUM(gs) AS total_games_started
+		, SUM(so) AS total_strikeouts
+	FROM pitching
+	WHERE yearid = 2016
+	GROUP BY playerid
+	HAVING SUM(gs) >= 10
+	)
+, salary AS (
+	SELECT playerid, SUM(salary) AS total_salary
+	FROM salaries
+	WHERE yearid = 2016
+	GROUP BY playerid
+	)
+SELECT 
+	namefirst || ' ' || namelast AS pitcher_name
+	, total_games_started
+	, total_strikeouts
+	, total_salary
+	, ROUND(total_salary::numeric / total_strikeouts, 2) AS efficiency
+FROM pitcher_stats
+LEFT JOIN people
+USING(playerid)
+INNER JOIN salary
+USING (playerid)
+ORDER BY efficiency DESC
+LIMIT 1;WITH pitcher_stats AS (
+	SELECT 
+		playerid
+		, SUM(gs) AS total_games_started
+		, SUM(so) AS total_strikeouts
+	FROM pitching
+	WHERE yearid = 2016
+	GROUP BY playerid
+	HAVING SUM(gs) >= 10
+	)
+, salary AS (
+	SELECT playerid, SUM(salary) AS total_salary
+	FROM salaries
+	WHERE yearid = 2016
+	GROUP BY playerid
+	)
+SELECT 
+	namefirst || ' ' || namelast AS pitcher_name
+	, total_games_started
+	, total_strikeouts
+	, total_salary
+	, ROUND(total_salary::numeric / total_strikeouts, 2) AS efficiency
+FROM pitcher_stats
+LEFT JOIN people
+USING(playerid)
+INNER JOIN salary
+USING (playerid)
+ORDER BY efficiency DESC
+LIMIT 1;
+
 -- 8. Find all players who have had at least 3000 career hits. Report those players' names, total number of hits, and the year they were inducted into the hall of fame (If they were not inducted into the hall of fame, put a null in that column.) Note that a player being inducted into the hall of fame is indicated by a 'Y' in the **inducted** column of the halloffame table.
 
 WITH CTE AS (SELECT playerid, SUM(h) AS total_hits
@@ -352,9 +534,30 @@ SELECT namefirst || ' ' || namelast AS full_name, CTE.total_hits, halloffame.yea
 FROM CTE
 INNER JOIN people
 USING(playerid)
-INNER JOIN halloffame
+LEFT JOIN halloffame
 USING(playerid)
-GROUP BY namefirst, namelast, CTE.total_hits, halloffame.yearid, halloffame.inducted;
+GROUP BY namefirst, namelast, CTE.total_hits, halloffame.yearid, halloffame.inducted
+ORDER BY full_name;
+
+--or
+
+WITH exceed_3000 AS(
+SELECT SUM(h) AS total_hits, playerid
+FROM batting
+GROUP BY playerid
+HAVING sum(h) >= 3000
+	),
+ HOF_Yes AS (
+SELECT *
+FROM halloffame
+WHERE inducted = 'Y'
+)
+SELECT namefirst || '' || namelast AS name, total_hits, yearid
+FROM exceed_3000
+LEFT JOIN HOF_Yes
+USING(playerid)
+INNER JOIN people
+USING(playerid)
 
 -- 9. Find all players who had at least 1,000 hits for two different teams. Report those players' full names.
 
@@ -367,8 +570,6 @@ HAVING SUM(batting.h) >= 1000),
 
 CTE_2 AS (SELECT CTE_1.playerid
 FROM CTE_1
-INNER JOIN people
-USING(playerid)
 GROUP BY CTE_1.playerid
 HAVING COUNT(DISTINCT CTE_1.team_name) >= 2)
 
@@ -383,7 +584,74 @@ ORDER BY full_name;
 
 -- 10. Find all players who hit their career highest number of home runs in 2016. Consider only players who have played in the league for at least 10 years, and who hit at least one home run in 2016. Report the players' first and last names and the number of home runs they hit in 2016.
 
+WITH CTE AS (SELECT playerid, namefirst|| ' ' ||namelast AS full_name, COUNT(DISTINCT yearid) AS years_played
+FROM people
+INNER JOIN batting
+USING(playerid)
+GROUP BY playerid, namefirst, namelast
+HAVING COUNT(DISTINCT yearid) >= 10),
+--WHERE EXTRACT(YEAR FROM CAST(finalgame AS DATE)) - EXTRACT(YEAR FROM CAST(debut AS DATE)) >= 9),
 
+CTE_2 AS(SELECT playerid, full_name, years_played, SUM(batting.hr) AS total_hr_2016, yearid
+FROM batting
+INNER JOIN CTE
+USING(playerid)
+WHERE yearid = 2016
+GROUP BY playerid, full_name, years_played, yearid
+HAVING SUM(batting.hr) >= 1),
+
+CTE_3 AS(SELECT playerid, MAX(hr) AS max_yearly_hr
+FROM batting
+GROUP BY playerid)
+
+SELECT full_name, max_yearly_hr, yearid, playerid
+FROM CTE_2
+INNER JOIN CTE_3
+USING(playerid)
+WHERE total_hr_2016 = max_yearly_hr
+ORDER BY full_name;
+
+--or
+
+WITH full_batting AS (
+    SELECT
+        playerid,
+        yearid,
+        SUM(hr) AS hr
+    FROM batting
+    GROUP BY playerid, yearid
+),
+decaders AS (
+    SELECT
+        playerid
+    FROM full_batting
+    GROUP BY playerid
+    HAVING COUNT(DISTINCT yearid) >= 10
+),
+eligible_players AS (
+    SELECT
+        playerid,
+        hr
+    FROM decaders
+    INNER JOIN full_batting
+    USING(playerid)
+    WHERE yearid = 2016 AND hr >= 1
+),
+career_bests AS (
+    SELECT
+        playerid,
+        MAX(hr) AS hr
+    FROM full_batting
+    GROUP BY playerid
+)
+SELECT
+    namefirst || ' ' || namelast AS full_name,
+    hr
+FROM eligible_players
+NATURAL JOIN career_bests
+INNER JOIN people
+USING(playerid)
+ORDER BY full_name;
 
 -- After finishing the above questions, here are some open-ended questions to consider.
 
